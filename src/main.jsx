@@ -372,9 +372,650 @@ function Dashboard({user,profile,onRoute}){
   </main>
 }
 
-function Admin({onRoute}){const[regs,setRegs]=useState([]),[loading,setLoading]=useState(true),[filter,setFilter]=useState("all");async function load(){setLoading(true);const{data,error}=await supabase.from("registrations").select("*,team_members(*)").order("created_at",{ascending:false});if(error)alert(error.message);setRegs(data||[]);setLoading(false)}useEffect(()=>{load()},[]);const counts=useMemo(()=>({all:regs.length,pending:regs.filter(r=>r.payment_status==="pending").length,approved:regs.filter(r=>r.payment_status==="approved").length,rejected:regs.filter(r=>r.payment_status==="rejected").length}),[regs]);const visible=regs.filter(r=>filter==="all"||r.payment_status===filter);return <main className="page admin"><section className="dashboard-head"><div><span className="index">ADMIN CONTROL CENTRE</span><h1>Verification <strong>desk.</strong></h1><p>Review participant details, team data and payment evidence. This is the only approval gate.</p></div><div className="dash-head-actions"><button className="outline" onClick={load}><RefreshCw size={14}/> Refresh</button><button className="outline" onClick={async()=>{await supabase.auth.signOut();onRoute("home")}}><LogOut size={15}/> Sign out</button></div></section><div className="admin-stats">{[["all","TOTAL","All registrations"],["pending","PENDING","Need review"],["approved","APPROVED","Verified"],["rejected","REJECTED","Rejected / revoked"]].map(([k,a,b])=><button key={k} className={filter===k?"active":""} onClick={()=>setFilter(k)}><span>{a}</span><strong>{counts[k]}</strong><small>{b}</small></button>)}</div>{loading?<div className="empty">Loading registrations…</div>:!visible.length?<div className="empty"><ClipboardCheck/><b>No records in this filter.</b></div>:<div className="admin-list">{visible.map(r=><AdminRow key={r.id} r={r} reload={load}/>)}</div>}</main>}
-function AdminRow({r,reload}){const[note,setNote]=useState(r.admin_note||""),[url,setUrl]=useState(""),[busy,setBusy]=useState(false);async function openShot(){if(!r.payment_screenshot_path)return;const{data,error}=await supabase.storage.from("payment-screenshots").createSignedUrl(r.payment_screenshot_path,600);if(error)alert(error.message);else setUrl(data.signedUrl)}async function decide(status){setBusy(true);const{error}=await supabase.from("registrations").update({payment_status:status,admin_note:note||null,verified_at:status==="approved"?new Date().toISOString():null}).eq("id",r.id);if(error)alert(error.message);else reload();setBusy(false)}return <article className="admin-row"><div className="admin-main"><div className="admin-person"><span className="index">{r.register_no||"NO REG NO."} · {new Date(r.created_at).toLocaleString("en-IN")}</span><h2>{r.name}</h2><p><strong>Team:</strong> {r.team_name||"—"}</p>{r.problem_theme&&<p><strong>Problem theme:</strong> {THEME_DATA.find(t=>t.id===r.problem_theme)?.name||r.problem_theme}</p>}<p>{r.college_name} · {r.department} · {r.branch} · {r.section} · {r.year}</p><p><Mail size={13}/> {r.email} · {r.phone}</p><div className="admin-tags">{r.selected_challenges.map(id=><span key={id}>{challenges.find(c=>c.id===id)?.title}</span>)}</div></div><div className="admin-status"><span>PAYMENT</span><em className={r.payment_status}>{r.payment_status}</em><b>₹{r.payment_amount}</b></div></div><div className="admin-team">{(r.team_members||[]).length?(r.team_members.map(m=><span key={m.id}><Users size={13}/> {m.name} · {m.email} · {m.challenge_id}</span>)):<span>Individual / no additional team members</span>}</div><div className="admin-actions"><button className="outline" onClick={openShot}><FileUp/> View payment screenshot</button><input placeholder="Admin note (optional)" value={note} onChange={e=>setNote(e.target.value)}/><button className="approve" disabled={busy||r.payment_status==="approved"} onClick={()=>decide("approved")}>Approve</button><button className="reject" disabled={busy} onClick={()=>decide("rejected")}>{r.payment_status==="approved"?"Revoke":"Reject"}</button></div>{url&&<div className="shot"><img src={url}/><button onClick={()=>setUrl("")}><X/></button></div>}</article>}
+function Admin({ onRoute }) {
+  const [regs, setRegs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("all");
+  const [error, setError] = useState("");
 
+  const load = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      // Verify the currently logged-in user first
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError) throw authError;
+
+      if (!user) {
+        onRoute("login");
+        return;
+      }
+
+      // Verify admin role
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, full_name, role")
+        .eq("id", user.id)
+        .single();
+
+      if (profileError) throw profileError;
+
+      if (profile?.role !== "admin") {
+        onRoute("dashboard");
+        return;
+      }
+
+      /*
+       * IMPORTANT:
+       * Do NOT use:
+       * registrations.select("*,team_members(*)")
+       *
+       * Fetch registrations and team members separately.
+       * This avoids PostgREST relationship/schema-cache problems.
+       */
+      const { data: registrationData, error: registrationError } =
+        await supabase
+          .from("registrations")
+          .select(`
+            id,
+            user_id,
+            name,
+            branch,
+            department,
+            section,
+            register_no,
+            year,
+            college_name,
+            email,
+            phone,
+            selected_challenges,
+            payment_amount,
+            payment_screenshot_path,
+            payment_status,
+            admin_note,
+            verified_at,
+            created_at,
+            team_name,
+            problem_theme
+          `)
+          .order("created_at", { ascending: false });
+
+      if (registrationError) throw registrationError;
+
+      const registrations = registrationData || [];
+
+      if (!registrations.length) {
+        setRegs([]);
+        return;
+      }
+
+      // Fetch team members independently
+      const registrationIds = registrations.map((r) => r.id);
+
+      const { data: memberData, error: memberError } = await supabase
+        .from("team_members")
+        .select(`
+          id,
+          registration_id,
+          challenge_id,
+          member_index,
+          name,
+          email,
+          phone,
+          college_name,
+          created_at
+        `)
+        .in("registration_id", registrationIds)
+        .order("member_index", { ascending: true });
+
+      if (memberError) throw memberError;
+
+      const members = memberData || [];
+
+      // Attach team members to their registration
+      const membersByRegistration = {};
+
+      members.forEach((member) => {
+        if (!membersByRegistration[member.registration_id]) {
+          membersByRegistration[member.registration_id] = [];
+        }
+
+        membersByRegistration[member.registration_id].push(member);
+      });
+
+      const completeRegistrations = registrations.map((registration) => ({
+        ...registration,
+        team_members: membersByRegistration[registration.id] || [],
+        selected_challenges: Array.isArray(
+          registration.selected_challenges
+        )
+          ? registration.selected_challenges
+          : [],
+      }));
+
+      setRegs(completeRegistrations);
+    } catch (err) {
+      console.error("ADMIN LOAD ERROR:", err);
+      setError(err?.message || "Unable to load registrations.");
+      setRegs([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const counts = useMemo(
+    () => ({
+      all: regs.length,
+      pending: regs.filter(
+        (r) => r.payment_status === "pending"
+      ).length,
+      approved: regs.filter(
+        (r) => r.payment_status === "approved"
+      ).length,
+      rejected: regs.filter(
+        (r) => r.payment_status === "rejected"
+      ).length,
+    }),
+    [regs]
+  );
+
+  const visible = regs.filter(
+    (r) =>
+      filter === "all" ||
+      r.payment_status === filter
+  );
+
+  return (
+    <main className="page admin">
+      <section className="dashboard-head">
+        <div>
+          <span className="index">ADMIN CONTROL CENTRE</span>
+
+          <h1>
+            Verification <strong>desk.</strong>
+          </h1>
+
+          <p>
+            Review participant details, team data and payment
+            evidence. This is the only approval gate.
+          </p>
+        </div>
+
+        <div className="dash-head-actions">
+          <button
+            className="outline"
+            onClick={load}
+            disabled={loading}
+          >
+            <RefreshCw
+              size={14}
+              className={loading ? "spin" : ""}
+            />
+
+            {loading ? "Refreshing…" : "Refresh"}
+          </button>
+
+          <button
+            className="outline"
+            onClick={async () => {
+              await supabase.auth.signOut();
+              onRoute("home");
+            }}
+          >
+            <LogOut size={15} />
+            Sign out
+          </button>
+        </div>
+      </section>
+
+      {error && (
+        <div
+          className="admin-error"
+          style={{
+            margin: "0 7vw 20px",
+            padding: "16px 18px",
+            border: "1px solid rgba(220,100,130,.35)",
+            borderRadius: "12px",
+            background: "rgba(220,100,130,.06)",
+            color: "#e5a8b8",
+          }}
+        >
+          <strong>Database error:</strong>{" "}
+          {error}
+        </div>
+      )}
+
+      <div className="admin-stats">
+        {[
+          ["all", "TOTAL", "All registrations"],
+          ["pending", "PENDING", "Need review"],
+          ["approved", "APPROVED", "Verified"],
+          ["rejected", "REJECTED", "Rejected / revoked"],
+        ].map(([key, label, description]) => (
+          <button
+            key={key}
+            className={filter === key ? "active" : ""}
+            onClick={() => setFilter(key)}
+          >
+            <span>{label}</span>
+            <strong>{counts[key]}</strong>
+            <small>{description}</small>
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="empty">
+          Loading registrations…
+        </div>
+      ) : !visible.length ? (
+        <div className="empty">
+          <ClipboardCheck />
+          <b>
+            {filter === "all"
+              ? "No registrations found."
+              : `No ${filter} registrations found.`}
+          </b>
+        </div>
+      ) : (
+        <div className="admin-list">
+          {visible.map((registration) => (
+            <AdminRow
+              key={registration.id}
+              r={registration}
+              reload={load}
+              setRegs={setRegs}
+            />
+          ))}
+        </div>
+      )}
+    </main>
+  );
+}
+
+
+function AdminRow({ r, reload, setRegs }) {
+  const [note, setNote] = useState(
+    r.admin_note || ""
+  );
+
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [action, setAction] = useState("");
+
+  const selectedChallenges = Array.isArray(
+    r.selected_challenges
+  )
+    ? r.selected_challenges
+    : [];
+
+  const teamMembers = Array.isArray(r.team_members)
+    ? r.team_members
+    : [];
+
+  async function openShot() {
+    if (!r.payment_screenshot_path) {
+      alert("No payment screenshot was uploaded.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+
+      const { data, error } = await supabase.storage
+        .from("payment-screenshots")
+        .createSignedUrl(
+          r.payment_screenshot_path,
+          600
+        );
+
+      if (error) throw error;
+
+      if (!data?.signedUrl) {
+        throw new Error(
+          "Unable to generate payment screenshot URL."
+        );
+      }
+
+      setUrl(data.signedUrl);
+    } catch (err) {
+      console.error(
+        "PAYMENT SCREENSHOT ERROR:",
+        err
+      );
+
+      alert(
+        err?.message ||
+          "Unable to open payment screenshot."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+
+  async function decide(status) {
+    if (busy) return;
+
+    const isApproval = status === "approved";
+
+    const confirmed = window.confirm(
+      isApproval
+        ? `Approve registration ${r.register_no || r.id}?`
+        : `Reject/revoke registration ${r.register_no || r.id}?`
+    );
+
+    if (!confirmed) return;
+
+    setBusy(true);
+    setAction(status);
+
+    try {
+      // Always verify the current session
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError) throw authError;
+
+      if (!user) {
+        throw new Error(
+          "Your admin session has expired. Please log in again."
+        );
+      }
+
+      // Verify admin account before changing anything
+      const { data: profile, error: profileError } =
+        await supabase
+          .from("profiles")
+          .select("id, role")
+          .eq("id", user.id)
+          .single();
+
+      if (profileError) throw profileError;
+
+      if (profile?.role !== "admin") {
+        throw new Error(
+          "You do not have administrator permission."
+        );
+      }
+
+      const updatePayload = {
+        payment_status: status,
+        admin_note: note.trim() || null,
+        verified_at: isApproval
+          ? new Date().toISOString()
+          : null,
+      };
+
+      /*
+       * IMPORTANT:
+       * Match by the registration UUID.
+       * Then SELECT the updated row so we know the
+       * database actually changed.
+       */
+      const { data: updatedRows, error: updateError } =
+        await supabase
+          .from("registrations")
+          .update(updatePayload)
+          .eq("id", r.id)
+          .select(`
+            id,
+            payment_status,
+            admin_note,
+            verified_at
+          `);
+
+      if (updateError) throw updateError;
+
+      if (!updatedRows || updatedRows.length !== 1) {
+        throw new Error(
+          "The registration was not updated. Check the Supabase admin UPDATE policy."
+        );
+      }
+
+      const updated = updatedRows[0];
+
+      /*
+       * Immediately update the UI from the confirmed
+       * database response.
+       */
+      setRegs((current) =>
+        current.map((item) =>
+          item.id === r.id
+            ? {
+                ...item,
+                payment_status:
+                  updated.payment_status,
+                admin_note:
+                  updated.admin_note,
+                verified_at:
+                  updated.verified_at,
+              }
+            : item
+        )
+      );
+
+      alert(
+        isApproval
+          ? "Registration approved successfully."
+          : "Registration rejected successfully."
+      );
+
+      // Reload everything from DB
+      await reload();
+    } catch (err) {
+      console.error(
+        `REGISTRATION ${status.toUpperCase()} ERROR:`,
+        err
+      );
+
+      alert(
+        err?.message ||
+          `Unable to ${status} registration.`
+      );
+    } finally {
+      setBusy(false);
+      setAction("");
+    }
+  }
+
+
+  return (
+    <article className="admin-row">
+      <div className="admin-main">
+        <div className="admin-person">
+          <span className="index">
+            {r.register_no || "NO REG NO."}
+            {" · "}
+            {r.created_at
+              ? new Date(
+                  r.created_at
+                ).toLocaleString("en-IN")
+              : "Unknown date"}
+          </span>
+
+          <h2>{r.name || "Unnamed participant"}</h2>
+
+          <p>
+            <strong>Team:</strong>{" "}
+            {r.team_name || "Individual"}
+          </p>
+
+          {r.problem_theme && (
+            <p>
+              <strong>
+                Problem theme:
+              </strong>{" "}
+              {THEME_DATA.find(
+                (t) =>
+                  t.id === r.problem_theme
+              )?.name ||
+                r.problem_theme}
+            </p>
+          )}
+
+          <p>
+            {r.college_name || "—"}
+            {" · "}
+            {r.department || "—"}
+            {" · "}
+            {r.branch || "—"}
+            {" · "}
+            {r.section || "—"}
+            {" · "}
+            {r.year || "—"}
+          </p>
+
+          <p>
+            <Mail size={13} />
+            {" "}
+            {r.email || "—"}
+            {" · "}
+            {r.phone || "—"}
+          </p>
+
+          <div className="admin-tags">
+            {selectedChallenges.length ? (
+              selectedChallenges.map((id) => (
+                <span key={id}>
+                  {challenges.find(
+                    (c) => c.id === id
+                  )?.title || id}
+                </span>
+              ))
+            ) : (
+              <span>No challenge selected</span>
+            )}
+          </div>
+        </div>
+
+        <div className="admin-status">
+          <span>PAYMENT</span>
+
+          <em
+            className={
+              r.payment_status || "pending"
+            }
+          >
+            {(
+              r.payment_status || "pending"
+            ).toUpperCase()}
+          </em>
+
+          <b>
+            ₹
+            {Number(
+              r.payment_amount || 0
+            ).toFixed(2)}
+          </b>
+        </div>
+      </div>
+
+
+      <div className="admin-team">
+        {teamMembers.length ? (
+          teamMembers.map((member) => (
+            <span key={member.id}>
+              <Users size={13} />
+              {" "}
+              {member.name || "Unnamed"}
+              {" · "}
+              {member.email || "—"}
+              {" · "}
+              {member.challenge_id || "—"}
+            </span>
+          ))
+        ) : (
+          <span>
+            Individual / no additional team members
+          </span>
+        )}
+      </div>
+
+
+      <div className="admin-actions">
+        <button
+          className="outline"
+          onClick={openShot}
+          disabled={
+            busy || !r.payment_screenshot_path
+          }
+        >
+          <FileUp />
+          {busy && !action
+            ? "Opening…"
+            : "View payment screenshot"}
+        </button>
+
+        <input
+          placeholder="Admin note (optional)"
+          value={note}
+          onChange={(e) =>
+            setNote(e.target.value)
+          }
+          disabled={busy}
+        />
+
+        <button
+          className="approve"
+          disabled={
+            busy ||
+            r.payment_status === "approved"
+          }
+          onClick={() =>
+            decide("approved")
+          }
+        >
+          {action === "approved"
+            ? "Approving…"
+            : "Approve"}
+        </button>
+
+        <button
+          className="reject"
+          disabled={busy}
+          onClick={() =>
+            decide("rejected")
+          }
+        >
+          {action === "rejected"
+            ? "Processing…"
+            : r.payment_status === "approved"
+            ? "Revoke"
+            : "Reject"}
+        </button>
+      </div>
+
+
+      {url && (
+        <div className="shot">
+          <img
+            src={url}
+            alt="Payment proof"
+          />
+
+          <button
+            onClick={() => setUrl("")}
+            aria-label="Close payment screenshot"
+          >
+            <X />
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
 function Recognition({onRoute}){
   const milestones=[["BRONZE","4 Bronze badges → 1 Silver","First layer of visible merit."],["SILVER","3 Silver badges → 1 Gold","A stronger signal of repeated performance."],["GOLD","10 Gold badges → Direct Interview","Unlock the ARVEXA hiring advantage."]];
   return <main className="page recognition-page">
