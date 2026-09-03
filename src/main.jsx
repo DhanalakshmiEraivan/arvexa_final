@@ -427,8 +427,6 @@ function Admin({ onRoute }) {
             name,
             branch,
             department,
-            section,
-            register_no,
             year,
             college_name,
             email,
