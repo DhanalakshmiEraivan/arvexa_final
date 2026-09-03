@@ -1,7 +1,9 @@
 import React,{useEffect,useMemo,useState} from "react";
 import {createRoot} from "react-dom/client";
 import {motion,AnimatePresence,useMotionValue,useSpring,useTransform} from "framer-motion";
-import {ArrowRight,ArrowLeft,Award,BadgeCheck,BrainCircuit,CalendarDays,Check,ChevronDown,Clock3,Code2,ExternalLink,FileUp,Globe2,Layers3,Lightbulb,LogIn,LogOut,Mail,Menu,ShieldCheck,Sparkles,Star,Trophy,Upload,Users,X,Zap,LockKeyhole,ClipboardCheck,Timer,BarChart3,CircleAlert,RefreshCw,Send,FileText,Target,Medal,MousePointer2,Workflow,Infinity,ScanLine,Quote,CheckCircle2} from "lucide-react";
+import {
+  ArrowRight,ArrowLeft,Award,BadgeCheck,BrainCircuit,CalendarDays,Check,
+  ChevronDown,Clock3,Code2,ExternalLink,FileUp,Layers3,Lightbulb,LogIn,LogOut,Mail,Menu,ShieldCheck,Sparkles,Star,Trophy,Upload,Users,X,Zap,LockKeyhole,ClipboardCheck,Timer,BarChart3,CircleAlert,RefreshCw,Send,FileText,Target,Medal,MousePointer2,Workflow,Infinity,ScanLine,Quote,CheckCircle2} from "lucide-react";
 import {QRCodeSVG} from "qrcode.react";
 import {supabase} from "./supabase";
 import "./styles.css";
@@ -244,9 +246,8 @@ function Auth({mode="login",onAuth,onRoute}){
         {!isForgot&&<label>PASSWORD<div className="password-wrap"><input type={showPassword?"text":"password"} minLength="6" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Enter your password" required/><button type="button" onClick={()=>setShowPassword(!showPassword)}>{showPassword?"Hide":"Show"}</button></div></label>}
         <button className="auth-main-btn" disabled={busy}>{busy?"Please wait…":isSignup?"Create account":isForgot?"Send reset link":"Sign in"} <ArrowRight size={16}/></button>
         {msg&&<div className={"auth-message "+(msg.toLowerCase().includes("error")?"error":"")}>{msg}</div>}
-        
-        </div>}
-        <div className="auth-switches">
+
+<div className="auth-switches">
           {mode==="login"&&<button type="button" onClick={()=>onRoute("forgot")}>Forgot password?</button>}
           <button type="button" onClick={()=>onRoute(isSignup?"login":"signup")}>{isSignup?"Already have an account? Sign in":"New participant? Create an account"}</button>
         </div>
