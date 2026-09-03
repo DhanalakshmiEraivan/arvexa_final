@@ -121,3 +121,236 @@ alter table public.registrations add column if not exists problem_theme text;
 -- PostgREST schema-cache refresh for Supabase projects where the new columns were
 -- added after the API schema was first loaded.
 notify pgrst, 'reload schema';
+-- =========================================================
+-- ARVEXA ADMIN ACCESS + REGISTRATION APPROVAL FIX
+-- =========================================================
+
+-- Make sure RLS is enabled
+alter table public.profiles enable row level security;
+alter table public.registrations enable row level security;
+alter table public.team_members enable row level security;
+
+
+-- =========================================================
+-- ADMIN CHECK
+-- =========================================================
+
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.profiles
+    where profiles.id = auth.uid()
+      and profiles.role = 'admin'
+  );
+$$;
+
+
+-- =========================================================
+-- PROFILES
+-- =========================================================
+
+drop policy if exists "profile self read"
+on public.profiles;
+
+create policy "profile self read"
+on public.profiles
+for select
+to authenticated
+using (
+  id = auth.uid()
+  or public.is_admin()
+);
+
+
+drop policy if exists "admin profile update"
+on public.profiles;
+
+create policy "admin profile update"
+on public.profiles
+for update
+to authenticated
+using (
+  public.is_admin()
+)
+with check (
+  public.is_admin()
+);
+
+
+-- =========================================================
+-- REGISTRATIONS
+-- =========================================================
+
+drop policy if exists "registrations self insert"
+on public.registrations;
+
+create policy "registrations self insert"
+on public.registrations
+for insert
+to authenticated
+with check (
+  user_id = auth.uid()
+);
+
+
+drop policy if exists "registrations self read"
+on public.registrations;
+
+create policy "registrations self read"
+on public.registrations
+for select
+to authenticated
+using (
+  user_id = auth.uid()
+  or public.is_admin()
+);
+
+
+drop policy if exists "registrations admin update"
+on public.registrations;
+
+create policy "registrations admin update"
+on public.registrations
+for update
+to authenticated
+using (
+  public.is_admin()
+)
+with check (
+  public.is_admin()
+);
+
+
+-- =========================================================
+-- TEAM MEMBERS
+-- =========================================================
+
+drop policy if exists "team self insert"
+on public.team_members;
+
+create policy "team self insert"
+on public.team_members
+for insert
+to authenticated
+with check (
+  exists (
+    select 1
+    from public.registrations r
+    where r.id = registration_id
+      and r.user_id = auth.uid()
+  )
+);
+
+
+drop policy if exists "team self/admin read"
+on public.team_members;
+
+create policy "team self/admin read"
+on public.team_members
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.registrations r
+    where r.id = registration_id
+      and r.user_id = auth.uid()
+  )
+  or public.is_admin()
+);
+
+
+-- =========================================================
+-- REGISTRATION INDEXES
+-- =========================================================
+
+create index if not exists registrations_user_idx
+on public.registrations(user_id);
+
+create index if not exists registrations_status_idx
+on public.registrations(payment_status);
+
+create index if not exists registrations_created_idx
+on public.registrations(created_at desc);
+
+create index if not exists team_members_registration_idx
+on public.team_members(registration_id);
+
+
+-- =========================================================
+-- REQUIRED REGISTRATION COLUMNS
+-- =========================================================
+
+alter table public.registrations
+add column if not exists team_name text;
+
+alter table public.registrations
+add column if not exists problem_theme text;
+
+alter table public.registrations
+add column if not exists admin_note text;
+
+alter table public.registrations
+add column if not exists verified_at timestamptz;
+
+
+-- =========================================================
+-- STORAGE
+-- =========================================================
+
+insert into storage.buckets (
+  id,
+  name,
+  public
+)
+values (
+  'payment-screenshots',
+  'payment-screenshots',
+  false
+)
+on conflict (id)
+do nothing;
+
+
+drop policy if exists "payment upload own folder"
+on storage.objects;
+
+create policy "payment upload own folder"
+on storage.objects
+for insert
+to authenticated
+with check (
+  bucket_id = 'payment-screenshots'
+  and (storage.foldername(name))[1] =
+      auth.uid()::text
+);
+
+
+drop policy if exists "payment read own/admin"
+on storage.objects;
+
+create policy "payment read own/admin"
+on storage.objects
+for select
+to authenticated
+using (
+  bucket_id = 'payment-screenshots'
+  and (
+    (storage.foldername(name))[1] =
+      auth.uid()::text
+    or public.is_admin()
+  )
+);
+
+
+-- =========================================================
+-- FORCE POSTGREST TO REFRESH ITS SCHEMA
+-- =========================================================
+
+notify pgrst, 'reload schema';
