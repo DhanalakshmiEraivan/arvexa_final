@@ -292,9 +292,135 @@ function Register({user,initialChallenge,onRoute,onSaved}){
       const path=`${user.id}/${regId}-${Date.now()}-${file.name.replace(/[^a-z0-9._-]/gi,"_")}`;
       const {error:uerr}=await supabase.storage.from("payment-screenshots").upload(path,file);
       if(uerr)throw uerr;
-      const registrationPayload={
-        id:regId,user_id:user.id,name:form.name,team_name:form.team_name,branch:form.branch,department:form.department,year:form.year,college_name:form.college,email:form.email,phone:form.phone,selected_challenges:selected,problem_theme:problemTheme||null,payment_amount:FEE,payment_status:"pending",payment_screenshot_path:path
-      };
+      const registrationPayload = {
+  id: regId,
+  user_id: user.id,
+
+  name: form.name.trim(),
+
+  team_name:
+    form.team_name.trim(),
+
+  branch:
+    form.branch.trim(),
+
+  department:
+    form.department.trim(),
+
+  year:
+    form.year.trim(),
+
+  college_name:
+    form.college.trim(),
+
+  email:
+    form.email.trim(),
+
+  phone:
+    form.phone.trim(),
+
+  selected_challenges:
+    selected,
+
+  problem_theme:
+    problemTheme || null,
+
+  payment_amount:
+    FEE,
+
+  payment_status:
+    "pending",
+
+  payment_screenshot_path:
+    path,
+
+  admin_note:
+    null,
+
+  verified_at:
+    null
+};
+
+
+const {
+  data: reg,
+  error: rerr
+} = await supabase
+  .from("registrations")
+  .insert(registrationPayload)
+  .select("*")
+  .single();
+
+
+if (rerr) {
+  throw rerr;
+}
+
+
+const rows = [];
+
+
+selected.forEach((challengeId) => {
+
+  for (
+    let i = 0;
+    i < maxMembers(challengeId);
+    i++
+  ) {
+
+    const member =
+      members[challengeId]?.[i];
+
+    if (member) {
+
+      rows.push({
+
+        registration_id:
+          reg.id,
+
+        challenge_id:
+          challengeId,
+
+        member_index:
+          i + 1,
+
+        name:
+          member.name.trim(),
+
+        email:
+          member.email.trim(),
+
+        phone:
+          member.phone?.trim() || "",
+
+        college_name:
+          member.college?.trim() || ""
+
+      });
+
+    }
+
+  }
+
+});
+
+
+if (rows.length > 0) {
+
+  const {
+    error: teamError
+  } = await supabase
+    .from("team_members")
+    .insert(rows);
+
+  if (teamError) {
+    throw teamError;
+  }
+
+}
+
+
+setSubmitted(true);
       let {data:reg,error:rerr}=await supabase.from("registrations").insert(registrationPayload).select().single();
       // Older production schemas may still have the column missing from the live table.
       // Retry once without it so the registration flow remains usable; the supplied SQL migration
@@ -372,113 +498,60 @@ function Dashboard({user,profile,onRoute}){
   </main>
 }
 
-function Admin({ onRoute }) {
+function Admin({onRoute}) {
   const [regs, setRegs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const [error, setError] = useState("");
 
-  const load = async () => {
+  async function load() {
     setLoading(true);
     setError("");
 
     try {
-      // Verify the currently logged-in user first
+      /*
+       * Fetch registrations separately.
+       * Do NOT use:
+       *
+       * select("*,team_members(*)")
+       *
+       * because relying on the automatic Supabase relationship
+       * can cause the admin dashboard to fail when the relationship
+       * is not correctly detected/cached by PostgREST.
+       */
       const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
+        data: registrations,
+        error: registrationsError
+      } = await supabase
+        .from("registrations")
+        .select("*")
+        .order("created_at", { ascending: false });
 
-      if (authError) throw authError;
-
-      if (!user) {
-        onRoute("login");
-        return;
-      }
-
-      // Verify admin role
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, full_name, role")
-        .eq("id", user.id)
-        .single();
-
-      if (profileError) throw profileError;
-
-      if (profile?.role !== "admin") {
-        onRoute("dashboard");
-        return;
+      if (registrationsError) {
+        throw registrationsError;
       }
 
       /*
-       * IMPORTANT:
-       * Do NOT use:
-       * registrations.select("*,team_members(*)")
-       *
-       * Fetch registrations and team members separately.
-       * This avoids PostgREST relationship/schema-cache problems.
+       * Fetch team members separately.
        */
-      const { data: registrationData, error: registrationError } =
-        await supabase
-          .from("registrations")
-          .select(`
-            id,
-            user_id,
-            name,
-            branch,
-            department,
-            year,
-            college_name,
-            email,
-            phone,
-            selected_challenges,
-            payment_amount,
-            payment_screenshot_path,
-            payment_status,
-            admin_note,
-            verified_at,
-            created_at,
-            team_name,
-            problem_theme
-          `)
-          .order("created_at", { ascending: false });
+      const {
+        data: teamMembers,
+        error: teamMembersError
+      } = await supabase
+        .from("team_members")
+        .select("*")
+        .order("created_at", { ascending: true });
 
-      if (registrationError) throw registrationError;
-
-      const registrations = registrationData || [];
-
-      if (!registrations.length) {
-        setRegs([]);
-        return;
+      if (teamMembersError) {
+        throw teamMembersError;
       }
 
-      // Fetch team members independently
-      const registrationIds = registrations.map((r) => r.id);
-
-      const { data: memberData, error: memberError } = await supabase
-        .from("team_members")
-        .select(`
-          id,
-          registration_id,
-          challenge_id,
-          member_index,
-          name,
-          email,
-          phone,
-          college_name,
-          created_at
-        `)
-        .in("registration_id", registrationIds)
-        .order("member_index", { ascending: true });
-
-      if (memberError) throw memberError;
-
-      const members = memberData || [];
-
-      // Attach team members to their registration
+      /*
+       * Group team members by registration_id.
+       */
       const membersByRegistration = {};
 
-      members.forEach((member) => {
+      (teamMembers || []).forEach((member) => {
         if (!membersByRegistration[member.registration_id]) {
           membersByRegistration[member.registration_id] = [];
         }
@@ -486,25 +559,31 @@ function Admin({ onRoute }) {
         membersByRegistration[member.registration_id].push(member);
       });
 
-      const completeRegistrations = registrations.map((registration) => ({
-        ...registration,
-        team_members: membersByRegistration[registration.id] || [],
-        selected_challenges: Array.isArray(
-          registration.selected_challenges
-        )
-          ? registration.selected_challenges
-          : [],
-      }));
+      /*
+       * Merge registrations + their team members.
+       */
+      const mergedRegistrations = (registrations || []).map(
+        (registration) => ({
+          ...registration,
+          team_members:
+            membersByRegistration[registration.id] || []
+        })
+      );
 
-      setRegs(completeRegistrations);
+      setRegs(mergedRegistrations);
     } catch (err) {
-      console.error("ADMIN LOAD ERROR:", err);
-      setError(err?.message || "Unable to load registrations.");
+      console.error("ADMIN DATABASE FETCH ERROR:", err);
+
+      setError(
+        err?.message ||
+        "Unable to load registrations from the database."
+      );
+
       setRegs([]);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   useEffect(() => {
     load();
@@ -513,15 +592,18 @@ function Admin({ onRoute }) {
   const counts = useMemo(
     () => ({
       all: regs.length,
+
       pending: regs.filter(
         (r) => r.payment_status === "pending"
       ).length,
+
       approved: regs.filter(
         (r) => r.payment_status === "approved"
       ).length,
+
       rejected: regs.filter(
         (r) => r.payment_status === "rejected"
-      ).length,
+      ).length
     }),
     [regs]
   );
@@ -534,9 +616,13 @@ function Admin({ onRoute }) {
 
   return (
     <main className="page admin">
+
       <section className="dashboard-head">
+
         <div>
-          <span className="index">ADMIN CONTROL CENTRE</span>
+          <span className="index">
+            ADMIN CONTROL CENTRE
+          </span>
 
           <h1>
             Verification <strong>desk.</strong>
@@ -549,17 +635,17 @@ function Admin({ onRoute }) {
         </div>
 
         <div className="dash-head-actions">
+
           <button
             className="outline"
             onClick={load}
             disabled={loading}
           >
-            <RefreshCw
-              size={14}
-              className={loading ? "spin" : ""}
-            />
+            <RefreshCw size={14} />
 
-            {loading ? "Refreshing…" : "Refresh"}
+            {loading
+              ? "Loading..."
+              : "Refresh"}
           </button>
 
           <button
@@ -572,342 +658,443 @@ function Admin({ onRoute }) {
             <LogOut size={15} />
             Sign out
           </button>
+
         </div>
+
       </section>
 
-      {error && (
-        <div
-          className="admin-error"
-          style={{
-            margin: "0 7vw 20px",
-            padding: "16px 18px",
-            border: "1px solid rgba(220,100,130,.35)",
-            borderRadius: "12px",
-            background: "rgba(220,100,130,.06)",
-            color: "#e5a8b8",
-          }}
-        >
-          <strong>Database error:</strong>{" "}
-          {error}
-        </div>
-      )}
-
       <div className="admin-stats">
+
         {[
-          ["all", "TOTAL", "All registrations"],
-          ["pending", "PENDING", "Need review"],
-          ["approved", "APPROVED", "Verified"],
-          ["rejected", "REJECTED", "Rejected / revoked"],
-        ].map(([key, label, description]) => (
+          [
+            "all",
+            "TOTAL",
+            "All registrations"
+          ],
+          [
+            "pending",
+            "PENDING",
+            "Need review"
+          ],
+          [
+            "approved",
+            "APPROVED",
+            "Verified"
+          ],
+          [
+            "rejected",
+            "REJECTED",
+            "Rejected / revoked"
+          ]
+        ].map(([key, title, description]) => (
+
           <button
             key={key}
-            className={filter === key ? "active" : ""}
+            className={
+              filter === key
+                ? "active"
+                : ""
+            }
             onClick={() => setFilter(key)}
           >
-            <span>{label}</span>
-            <strong>{counts[key]}</strong>
-            <small>{description}</small>
+            <span>{title}</span>
+
+            <strong>
+              {counts[key]}
+            </strong>
+
+            <small>
+              {description}
+            </small>
           </button>
+
         ))}
+
       </div>
 
-      {loading ? (
+      {error && (
+
+        <div className="empty admin-error">
+
+          <CircleAlert />
+
+          <b>
+            Database error
+          </b>
+
+          <p>
+            {error}
+          </p>
+
+          <button
+            className="outline"
+            onClick={load}
+          >
+            Try again
+          </button>
+
+        </div>
+
+      )}
+
+      {!error && loading && (
+
         <div className="empty">
           Loading registrations…
         </div>
-      ) : !visible.length ? (
-        <div className="empty">
-          <ClipboardCheck />
-          <b>
-            {filter === "all"
-              ? "No registrations found."
-              : `No ${filter} registrations found.`}
-          </b>
-        </div>
-      ) : (
-        <div className="admin-list">
-          {visible.map((registration) => (
-            <AdminRow
-              key={registration.id}
-              r={registration}
-              reload={load}
-              setRegs={setRegs}
-            />
-          ))}
-        </div>
+
       )}
+
+      {!error &&
+        !loading &&
+        visible.length === 0 && (
+
+          <div className="empty">
+
+            <ClipboardCheck />
+
+            <b>
+              No records in this filter.
+            </b>
+
+          </div>
+
+        )}
+
+      {!error &&
+        !loading &&
+        visible.length > 0 && (
+
+          <div className="admin-list">
+
+            {visible.map((registration) => (
+
+              <AdminRow
+                key={registration.id}
+                r={registration}
+                reload={load}
+              />
+
+            ))}
+
+          </div>
+
+        )}
+
     </main>
   );
 }
 
 
-function AdminRow({ r, reload, setRegs }) {
+function AdminRow({ r, reload }) {
+
   const [note, setNote] = useState(
     r.admin_note || ""
   );
 
   const [url, setUrl] = useState("");
+
   const [busy, setBusy] = useState(false);
-  const [action, setAction] = useState("");
 
-  const selectedChallenges = Array.isArray(
-    r.selected_challenges
-  )
-    ? r.selected_challenges
-    : [];
+  const [actionError, setActionError] =
+    useState("");
 
-  const teamMembers = Array.isArray(r.team_members)
-    ? r.team_members
-    : [];
 
+  /*
+   * Open payment screenshot.
+   */
   async function openShot() {
+
+    setActionError("");
+
     if (!r.payment_screenshot_path) {
-      alert("No payment screenshot was uploaded.");
+
+      setActionError(
+        "No payment screenshot was uploaded."
+      );
+
       return;
     }
 
     try {
-      setBusy(true);
 
-      const { data, error } = await supabase.storage
+      const {
+        data,
+        error
+      } = await supabase
+        .storage
         .from("payment-screenshots")
         .createSignedUrl(
           r.payment_screenshot_path,
           600
         );
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
 
       if (!data?.signedUrl) {
+
         throw new Error(
-          "Unable to generate payment screenshot URL."
+          "Unable to create payment screenshot URL."
         );
+
       }
 
       setUrl(data.signedUrl);
+
     } catch (err) {
+
       console.error(
         "PAYMENT SCREENSHOT ERROR:",
         err
       );
 
-      alert(
+      setActionError(
         err?.message ||
-          "Unable to open payment screenshot."
+        "Unable to open payment screenshot."
       );
-    } finally {
-      setBusy(false);
+
     }
   }
 
 
-  async function decide(status) {
-    if (busy) return;
+  /*
+   * Approve / reject registration.
+   */
+  async function decide(nextStatus) {
 
-    const isApproval = status === "approved";
-
-    const confirmed = window.confirm(
-      isApproval
-        ? `Approve registration ${r.register_no || r.id}?`
-        : `Reject/revoke registration ${r.register_no || r.id}?`
-    );
-
-    if (!confirmed) return;
+    if (busy) {
+      return;
+    }
 
     setBusy(true);
-    setAction(status);
+    setActionError("");
 
     try {
-      // Always verify the current session
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
 
-      if (authError) throw authError;
+      const updateData = {
+        payment_status: nextStatus,
 
-      if (!user) {
-        throw new Error(
-          "Your admin session has expired. Please log in again."
-        );
-      }
+        admin_note:
+          note.trim() || null,
 
-      // Verify admin account before changing anything
-      const { data: profile, error: profileError } =
-        await supabase
-          .from("profiles")
-          .select("id, role")
-          .eq("id", user.id)
-          .single();
-
-      if (profileError) throw profileError;
-
-      if (profile?.role !== "admin") {
-        throw new Error(
-          "You do not have administrator permission."
-        );
-      }
-
-      const updatePayload = {
-        payment_status: status,
-        admin_note: note.trim() || null,
-        verified_at: isApproval
-          ? new Date().toISOString()
-          : null,
+        /*
+         * Keep verification timestamp only
+         * when the registration is approved.
+         */
+        verified_at:
+          nextStatus === "approved"
+            ? new Date().toISOString()
+            : null
       };
 
+
       /*
-       * IMPORTANT:
-       * Match by the registration UUID.
-       * Then SELECT the updated row so we know the
-       * database actually changed.
+       * Update the exact registration.
        */
-      const { data: updatedRows, error: updateError } =
-        await supabase
-          .from("registrations")
-          .update(updatePayload)
-          .eq("id", r.id)
-          .select(`
-            id,
-            payment_status,
-            admin_note,
-            verified_at
-          `);
+      const {
+        data,
+        error
+      } = await supabase
+        .from("registrations")
+        .update(updateData)
+        .eq("id", r.id)
+        .select("*")
+        .single();
 
-      if (updateError) throw updateError;
 
-      if (!updatedRows || updatedRows.length !== 1) {
-        throw new Error(
-          "The registration was not updated. Check the Supabase admin UPDATE policy."
-        );
+      if (error) {
+        throw error;
       }
 
-      const updated = updatedRows[0];
+      if (!data) {
+
+        throw new Error(
+          "The registration was not updated."
+        );
+
+      }
+
 
       /*
-       * Immediately update the UI from the confirmed
-       * database response.
+       * Reload directly from Supabase.
+       * This guarantees that the dashboard reflects
+       * the actual database value.
        */
-      setRegs((current) =>
-        current.map((item) =>
-          item.id === r.id
-            ? {
-                ...item,
-                payment_status:
-                  updated.payment_status,
-                admin_note:
-                  updated.admin_note,
-                verified_at:
-                  updated.verified_at,
-              }
-            : item
-        )
-      );
-
-      alert(
-        isApproval
-          ? "Registration approved successfully."
-          : "Registration rejected successfully."
-      );
-
-      // Reload everything from DB
       await reload();
+
     } catch (err) {
+
       console.error(
-        `REGISTRATION ${status.toUpperCase()} ERROR:`,
+        "ADMIN APPROVAL/REJECTION ERROR:",
         err
       );
 
-      alert(
+      setActionError(
         err?.message ||
-          `Unable to ${status} registration.`
+        "Unable to update registration."
       );
+
     } finally {
+
       setBusy(false);
-      setAction("");
+
     }
   }
 
 
+  const selectedChallenges =
+    Array.isArray(r.selected_challenges)
+      ? r.selected_challenges
+      : [];
+
+
+  const teamMembers =
+    Array.isArray(r.team_members)
+      ? r.team_members
+      : [];
+
+
   return (
+
     <article className="admin-row">
+
       <div className="admin-main">
+
         <div className="admin-person">
+
           <span className="index">
-            {r.register_no || "NO REG NO."}
-            {" · "}
+
             {r.created_at
               ? new Date(
                   r.created_at
                 ).toLocaleString("en-IN")
-              : "Unknown date"}
+              : "Date unavailable"}
+
           </span>
 
-          <h2>{r.name || "Unnamed participant"}</h2>
+
+          <h2>
+            {r.name ||
+              "Unnamed participant"}
+          </h2>
+
 
           <p>
-            <strong>Team:</strong>{" "}
-            {r.team_name || "Individual"}
+            <strong>
+              Team:
+            </strong>{" "}
+            {r.team_name ||
+              "Individual"}
           </p>
 
+
           {r.problem_theme && (
+
             <p>
               <strong>
                 Problem theme:
               </strong>{" "}
+
               {THEME_DATA.find(
-                (t) =>
-                  t.id === r.problem_theme
+                (theme) =>
+                  theme.id ===
+                  r.problem_theme
               )?.name ||
                 r.problem_theme}
             </p>
+
           )}
 
-          <p>
-            {r.college_name || "—"}
-            {" · "}
-            {r.department || "—"}
-            {" · "}
-            {r.branch || "—"}
-            {" · "}
-            {r.section || "—"}
-            {" · "}
-            {r.year || "—"}
-          </p>
 
           <p>
-            <Mail size={13} />
-            {" "}
-            {r.email || "—"}
+            {r.college_name ||
+              "College not provided"}
+
             {" · "}
-            {r.phone || "—"}
+
+            {r.department ||
+              "Department not provided"}
+
+            {" · "}
+
+            {r.branch ||
+              "Branch not provided"}
+
+            {" · "}
+
+            {r.year ||
+              "Year not provided"}
           </p>
+
+
+          <p>
+
+            <Mail size={13} />
+
+            {" "}
+
+            {r.email ||
+              "Email not provided"}
+
+            {" · "}
+
+            {r.phone ||
+              "Phone not provided"}
+
+          </p>
+
 
           <div className="admin-tags">
-            {selectedChallenges.length ? (
-              selectedChallenges.map((id) => (
-                <span key={id}>
-                  {challenges.find(
-                    (c) => c.id === id
-                  )?.title || id}
-                </span>
-              ))
+
+            {selectedChallenges.length > 0 ? (
+
+              selectedChallenges.map(
+                (challengeId) => (
+
+                  <span key={challengeId}>
+
+                    {challenges.find(
+                      (challenge) =>
+                        challenge.id ===
+                        challengeId
+                    )?.title ||
+                      challengeId}
+
+                  </span>
+
+                )
+              )
+
             ) : (
-              <span>No challenge selected</span>
+
+              <span>
+                No challenge selected
+              </span>
+
             )}
+
           </div>
+
         </div>
 
+
         <div className="admin-status">
-          <span>PAYMENT</span>
+
+          <span>
+            PAYMENT
+          </span>
 
           <em
             className={
-              r.payment_status || "pending"
+              r.payment_status ||
+              "pending"
             }
           >
             {(
-              r.payment_status || "pending"
+              r.payment_status ||
+              "pending"
             ).toUpperCase()}
           </em>
 
@@ -917,44 +1104,72 @@ function AdminRow({ r, reload, setRegs }) {
               r.payment_amount || 0
             ).toFixed(2)}
           </b>
+
         </div>
+
       </div>
 
 
       <div className="admin-team">
-        {teamMembers.length ? (
+
+        {teamMembers.length > 0 ? (
+
           teamMembers.map((member) => (
+
             <span key={member.id}>
+
               <Users size={13} />
+
               {" "}
-              {member.name || "Unnamed"}
+
+              {member.name ||
+                "Unnamed member"}
+
               {" · "}
-              {member.email || "—"}
+
+              {member.email ||
+                "No email"}
+
               {" · "}
-              {member.challenge_id || "—"}
+
+              {member.challenge_id ||
+                "No challenge"}
+
+              {member.phone
+                ? ` · ${member.phone}`
+                : ""}
+
+              {member.college_name
+                ? ` · ${member.college_name}`
+                : ""}
+
             </span>
+
           ))
+
         ) : (
+
           <span>
-            Individual / no additional team members
+            Individual / no additional
+            team members
           </span>
+
         )}
+
       </div>
 
 
       <div className="admin-actions">
+
         <button
           className="outline"
           onClick={openShot}
-          disabled={
-            busy || !r.payment_screenshot_path
-          }
+          disabled={busy}
         >
           <FileUp />
-          {busy && !action
-            ? "Opening…"
-            : "View payment screenshot"}
+          View payment screenshot
         </button>
+
 
         <input
           placeholder="Admin note (optional)"
@@ -965,20 +1180,28 @@ function AdminRow({ r, reload, setRegs }) {
           disabled={busy}
         />
 
+
         <button
           className="approve"
           disabled={
             busy ||
-            r.payment_status === "approved"
+            r.payment_status ===
+              "approved"
           }
           onClick={() =>
             decide("approved")
           }
         >
-          {action === "approved"
-            ? "Approving…"
-            : "Approve"}
+
+          {busy
+            ? "Saving..."
+            : r.payment_status ===
+              "approved"
+              ? "Approved"
+              : "Approve"}
+
         </button>
+
 
         <button
           className="reject"
@@ -987,31 +1210,56 @@ function AdminRow({ r, reload, setRegs }) {
             decide("rejected")
           }
         >
-          {action === "rejected"
-            ? "Processing…"
-            : r.payment_status === "approved"
+
+          {r.payment_status ===
+            "approved"
             ? "Revoke"
             : "Reject"}
+
         </button>
+
       </div>
 
 
+      {actionError && (
+
+        <div className="admin-action-error">
+
+          <CircleAlert size={15} />
+
+          <span>
+            {actionError}
+          </span>
+
+        </div>
+
+      )}
+
+
       {url && (
+
         <div className="shot">
+
           <img
             src={url}
             alt="Payment proof"
           />
 
           <button
-            onClick={() => setUrl("")}
+            onClick={() =>
+              setUrl("")
+            }
             aria-label="Close payment screenshot"
           >
             <X />
           </button>
+
         </div>
+
       )}
+
     </article>
+
   );
 }
 function Recognition({onRoute}){
