@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+<title>ARVEXA 2026 emblem</title><desc>Angular A emblem surrounded by an orbital signal ring.</desc>
+<defs>
+ <linearGradient id="g" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#6d3ff2"/><stop offset=".52" stop-color="#a78bfa"/><stop offset="1" stop-color="#e7ddff"/></linearGradient>
+ <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffffff"/><stop offset="1" stop-color="#bfa8ff"/></linearGradient>
+ <filter id="glow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<circle cx="256" cy="256" r="218" fill="none" stroke="url(#g)" stroke-width="8" opacity=".35"/>
+<ellipse cx="256" cy="256" rx="220" ry="118" fill="none" stroke="url(#g)" stroke-width="5" opacity=".45" transform="rotate(-28 256 256)"/>
+<circle cx="449" cy="168" r="11" fill="#cbb8ff" filter="url(#glow)"/>
+<path d="M150 380 238 116h40l84 264h-52l-18-59h-78l-18 59h-46Zm76-103h52l-25-88-27 88Z" fill="url(#g2)"/>
+<path d="M201 278h110" stroke="url(#g)" stroke-width="14" stroke-linecap="round"/>
+<path d="M256 92v24" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".9"/>
+</svg>
