@@ -10,7 +10,7 @@ import "./styles.css";
 import Home from "./Home.jsx";
 import ChallengeDetail from "./ChallengeDetail.jsx";
 
-const EVENT_DATE=new Date("2026-09-13T15:15:00+05:30");
+const EVENT_DATE=new Date("2026-09-13T00:00:00+05:30");
 const FEE=Number(import.meta.env.VITE_REGISTRATION_FEE||50);
 const UPI_ID=import.meta.env.VITE_UPI_ID||"dhalak65@okicici";
 const COMPANY_URL="https://quadrafroynsolutions.in";
