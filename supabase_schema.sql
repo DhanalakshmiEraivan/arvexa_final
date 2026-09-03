@@ -1,6 +1,15 @@
 -- ============================================================
 -- ARVEXA 2026
--- COMPLETE SUPABASE PRODUCTION SCHEMA
+-- CLEAN SUPABASE PRODUCTION SCHEMA
+-- ============================================================
+-- IMPORTANT:
+-- 1. section is completely removed
+-- 2. register_no is completely removed
+-- 3. team_name and problem_theme are supported
+-- 4. admin can read registrations/team members
+-- 5. admin can approve/reject registrations
+-- 6. participants can read only their own records
+-- 7. payment screenshots remain private
 -- ============================================================
 
 create extension if not exists pgcrypto;
@@ -31,6 +40,54 @@ create table if not exists public.profiles (
 
 
 -- ============================================================
+-- ADD MISSING PROFILE COLUMNS TO EXISTING DATABASE
+-- ============================================================
+
+alter table public.profiles
+  add column if not exists full_name text;
+
+alter table public.profiles
+  add column if not exists role text;
+
+alter table public.profiles
+  add column if not exists gold_badges integer;
+
+alter table public.profiles
+  add column if not exists silver_badges integer;
+
+alter table public.profiles
+  add column if not exists bronze_badges integer;
+
+alter table public.profiles
+  add column if not exists created_at timestamptz;
+
+
+-- ============================================================
+-- FIX EXISTING NULL VALUES
+-- ============================================================
+
+update public.profiles
+set role = 'student'
+where role is null;
+
+update public.profiles
+set gold_badges = 0
+where gold_badges is null;
+
+update public.profiles
+set silver_badges = 0
+where silver_badges is null;
+
+update public.profiles
+set bronze_badges = 0
+where bronze_badges is null;
+
+update public.profiles
+set created_at = now()
+where created_at is null;
+
+
+-- ============================================================
 -- AUTOMATIC PROFILE CREATION
 -- ============================================================
 
@@ -40,21 +97,15 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare
-  first_user boolean;
 begin
-
-  select not exists (
-    select 1
-    from public.profiles
-  )
-  into first_user;
-
 
   insert into public.profiles (
     id,
     full_name,
-    role
+    role,
+    gold_badges,
+    silver_badges,
+    bronze_badges
   )
 
   values (
@@ -62,15 +113,24 @@ begin
 
     coalesce(
       new.raw_user_meta_data->>'full_name',
-      split_part(new.email, '@', 1)
+      split_part(coalesce(new.email, ''), '@', 1)
     ),
 
     case
-      when first_user then 'admin'
+      when not exists (
+        select 1
+        from public.profiles
+      )
+      then 'admin'
       else 'student'
-    end
-  );
+    end,
 
+    0,
+    0,
+    0
+  )
+
+  on conflict (id) do nothing;
 
   return new;
 
@@ -88,16 +148,14 @@ after insert on auth.users
 
 for each row
 
-execute procedure
-public.handle_new_user();
+execute function public.handle_new_user();
 
 
 -- ============================================================
 -- REGISTRATIONS
---
--- IMPORTANT:
--- section      REMOVED
--- register_no  REMOVED
+-- ============================================================
+-- NO section
+-- NO register_no
 -- ============================================================
 
 create table if not exists public.registrations (
@@ -134,34 +192,71 @@ create table if not exists public.registrations (
   payment_screenshot_path text,
 
   payment_status text not null
-    default 'pending'
-
-    check (
-      payment_status in (
-        'pending',
-        'approved',
-        'rejected'
-      )
-    ),
+    default 'pending',
 
   admin_note text,
 
   verified_at timestamptz,
 
   created_at timestamptz not null
-    default now()
+    default now(),
+
+  constraint registrations_payment_status_check
+    check (
+      payment_status in (
+        'pending',
+        'approved',
+        'rejected'
+      )
+    )
 );
 
 
 -- ============================================================
--- REMOVE OLD COLUMNS COMPLETELY
+-- EXISTING DATABASE: ADD REQUIRED NEW COLUMNS
 -- ============================================================
 
 alter table public.registrations
-drop column if exists section;
+  add column if not exists team_name text;
 
 alter table public.registrations
-drop column if exists register_no;
+  add column if not exists problem_theme text;
+
+alter table public.registrations
+  add column if not exists admin_note text;
+
+alter table public.registrations
+  add column if not exists verified_at timestamptz;
+
+
+-- ============================================================
+-- COMPLETELY REMOVE OLD FIELDS
+-- ============================================================
+
+alter table public.registrations
+  drop column if exists section;
+
+alter table public.registrations
+  drop column if exists register_no;
+
+
+-- ============================================================
+-- FIX PAYMENT STATUS
+-- ============================================================
+
+alter table public.registrations
+  drop constraint if exists registrations_payment_status_check;
+
+
+alter table public.registrations
+  add constraint registrations_payment_status_check
+  check (
+    payment_status in (
+      'pending',
+      'approved',
+      'rejected'
+    )
+  );
 
 
 -- ============================================================
@@ -198,32 +293,24 @@ create table if not exists public.team_members (
 -- INDEXES
 -- ============================================================
 
-create index if not exists
-registrations_user_idx
-
+create index if not exists registrations_user_idx
 on public.registrations(user_id);
 
 
-create index if not exists
-registrations_status_idx
-
+create index if not exists registrations_status_idx
 on public.registrations(payment_status);
 
 
-create index if not exists
-registrations_created_idx
-
+create index if not exists registrations_created_idx
 on public.registrations(created_at desc);
 
 
-create index if not exists
-team_members_registration_idx
-
+create index if not exists team_members_registration_idx
 on public.team_members(registration_id);
 
 
 -- ============================================================
--- ADMIN CHECK FUNCTION
+-- ADMIN CHECK
 -- ============================================================
 
 create or replace function public.is_admin()
@@ -232,26 +319,18 @@ language sql
 stable
 security definer
 set search_path = public
-
 as $$
-
   select exists (
-
     select 1
-
     from public.profiles
-
-    where id = auth.uid()
-
-    and role = 'admin'
-
+    where profiles.id = auth.uid()
+      and profiles.role = 'admin'
   );
-
 $$;
 
 
 -- ============================================================
--- ROW LEVEL SECURITY
+-- RLS
 -- ============================================================
 
 alter table public.profiles
@@ -268,13 +347,10 @@ enable row level security;
 -- PROFILE POLICIES
 -- ============================================================
 
-drop policy if exists
-"profile self read"
+drop policy if exists "profile self read"
 on public.profiles;
 
-
-create policy
-"profile self read"
+create policy "profile self read"
 
 on public.profiles
 
@@ -288,13 +364,10 @@ using (
 );
 
 
-drop policy if exists
-"admin profile update"
+drop policy if exists "admin profile update"
 on public.profiles;
 
-
-create policy
-"admin profile update"
+create policy "admin profile update"
 
 on public.profiles
 
@@ -315,13 +388,10 @@ with check (
 -- REGISTRATION INSERT
 -- ============================================================
 
-drop policy if exists
-"registrations self insert"
+drop policy if exists "registrations self insert"
 on public.registrations;
 
-
-create policy
-"registrations self insert"
+create policy "registrations self insert"
 
 on public.registrations
 
@@ -338,13 +408,10 @@ with check (
 -- REGISTRATION READ
 -- ============================================================
 
-drop policy if exists
-"registrations self read"
+drop policy if exists "registrations self read"
 on public.registrations;
 
-
-create policy
-"registrations self read"
+create policy "registrations self read"
 
 on public.registrations
 
@@ -360,16 +427,13 @@ using (
 
 -- ============================================================
 -- REGISTRATION UPDATE
--- ONLY ADMIN
+-- ADMIN ONLY
 -- ============================================================
 
-drop policy if exists
-"registrations admin update"
+drop policy if exists "registrations admin update"
 on public.registrations;
 
-
-create policy
-"registrations admin update"
+create policy "registrations admin update"
 
 on public.registrations
 
@@ -390,13 +454,10 @@ with check (
 -- TEAM MEMBER INSERT
 -- ============================================================
 
-drop policy if exists
-"team self insert"
+drop policy if exists "team self insert"
 on public.team_members;
 
-
-create policy
-"team self insert"
+create policy "team self insert"
 
 on public.team_members
 
@@ -407,17 +468,12 @@ to authenticated
 with check (
 
   exists (
-
     select 1
-
     from public.registrations r
 
-    where r.id =
-      registration_id
+    where r.id = registration_id
 
-    and r.user_id =
-      auth.uid()
-
+      and r.user_id = auth.uid()
   )
 
 );
@@ -427,13 +483,10 @@ with check (
 -- TEAM MEMBER READ
 -- ============================================================
 
-drop policy if exists
-"team self/admin read"
+drop policy if exists "team self admin read"
 on public.team_members;
 
-
-create policy
-"team self/admin read"
+create policy "team self admin read"
 
 on public.team_members
 
@@ -444,20 +497,17 @@ to authenticated
 using (
 
   exists (
-
     select 1
-
     from public.registrations r
 
-    where r.id =
-      registration_id
+    where r.id = registration_id
 
-    and r.user_id =
-      auth.uid()
-
+      and r.user_id = auth.uid()
   )
 
-  or public.is_admin()
+  or
+
+  public.is_admin()
 
 );
 
@@ -479,20 +529,17 @@ values (
 )
 
 on conflict (id)
-do nothing;
+do update set public = false;
 
 
 -- ============================================================
--- PAYMENT UPLOAD
+-- PAYMENT SCREENSHOT UPLOAD
 -- ============================================================
 
-drop policy if exists
-"payment upload own folder"
+drop policy if exists "payment upload own folder"
 on storage.objects;
 
-
-create policy
-"payment upload own folder"
+create policy "payment upload own folder"
 
 on storage.objects
 
@@ -502,8 +549,7 @@ to authenticated
 
 with check (
 
-  bucket_id =
-    'payment-screenshots'
+  bucket_id = 'payment-screenshots'
 
   and
 
@@ -518,13 +564,10 @@ with check (
 -- USER + ADMIN
 -- ============================================================
 
-drop policy if exists
-"payment read own/admin"
+drop policy if exists "payment read own admin"
 on storage.objects;
 
-
-create policy
-"payment read own/admin"
+create policy "payment read own admin"
 
 on storage.objects
 
@@ -534,8 +577,7 @@ to authenticated
 
 using (
 
-  bucket_id =
-    'payment-screenshots'
+  bucket_id = 'payment-screenshots'
 
   and
 
@@ -554,8 +596,7 @@ using (
 
 
 -- ============================================================
--- REFRESH POSTGREST SCHEMA CACHE
+-- POSTGRES SCHEMA CACHE
 -- ============================================================
 
-notify pgrst,
-'reload schema';
+notify pgrst, 'reload schema';
