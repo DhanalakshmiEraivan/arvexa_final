@@ -102,3 +102,4 @@ The registration flow uses the configured UPI ID and QR payment. The participant
 The UI uses remote Unsplash images for contextual competition visuals and Wikimedia Commons medal artwork for recognition. Remote images require internet access in the browser.
 
 "# Arvexa-" 
+"# Arvexa-" 
