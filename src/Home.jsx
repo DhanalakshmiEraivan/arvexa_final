@@ -253,7 +253,7 @@ export default function Home({onRoute}){
         <Reveal delay={.15}><div className="lh-tagline">Think sharper. <span>Build better.</span></div></Reveal>
         <Reveal delay={.22}><p>A focused national digital challenge for people who enjoy difficult problems, clean ideas and work worth showing.</p></Reveal>
         <Reveal delay={.23}><div className="lh-hero-countdown">
-          <div className="countdown-caption"><span className="lh-dot"/> COMPETITION STARTS · 13 SEPTEMBER 2026 · 3:15 PM IST</div>
+          <div className="countdown-caption"><span className="lh-dot"/> COMPETITION STARTS · 13 SEPTEMBER 2026 </div>
           <div className="hero-clock" data-event="2026-09-13T15:15:00+05:30">
             <div><strong className="hc-days">00</strong><span>DAYS</span></div>
             <i>:</i><div><strong className="hc-hours">00</strong><span>HOURS</span></div>
