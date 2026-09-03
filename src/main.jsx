@@ -292,8 +292,14 @@ function Register({user,initialChallenge,onRoute,onSaved}){
       const path=`${user.id}/${regId}-${Date.now()}-${file.name.replace(/[^a-z0-9._-]/gi,"_")}`;
       const {error:uerr}=await supabase.storage.from("payment-screenshots").upload(path,file);
       if(uerr)throw uerr;
+      // ============================================================
+// src/main.jsx
+// REPLACE THE EXISTING REGISTRATION INSERT BLOCK
+// ============================================================
+
       const registrationPayload = {
   id: regId,
+
   user_id: user.id,
 
   name: form.name.trim(),
@@ -339,88 +345,97 @@ function Register({user,initialChallenge,onRoute,onSaved}){
 
   verified_at:
     null
-};
+  };
 
 
-const {
+     const {
   data: reg,
-  error: rerr
+  error: registrationError
 } = await supabase
+
   .from("registrations")
+
   .insert(registrationPayload)
+
   .select("*")
+
   .single();
 
 
-if (rerr) {
-  throw rerr;
+      if (registrationError) {
+  throw registrationError;
 }
 
 
-const rows = [];
+    const rows = [];
 
 
-selected.forEach((challengeId) => {
+     selected.forEach((challengeId) => {
 
-  for (
+      const memberCount =
+      maxMembers(challengeId);
+
+      for (
     let i = 0;
-    i < maxMembers(challengeId);
+    i < memberCount;
     i++
   ) {
 
-    const member =
+      const member =
       members[challengeId]?.[i];
 
-    if (member) {
+      if (!member) {
+      continue;
+    }
 
       rows.push({
 
-        registration_id:
-          reg.id,
+      registration_id:
+        reg.id,
 
-        challenge_id:
-          challengeId,
+      challenge_id:
+        challengeId,
 
-        member_index:
-          i + 1,
+      member_index:
+        i + 1,
 
-        name:
-          member.name.trim(),
+      name:
+        member.name.trim(),
 
-        email:
-          member.email.trim(),
+      email:
+        member.email.trim(),
 
-        phone:
-          member.phone?.trim() || "",
+      phone:
+        member.phone?.trim() || "",
 
-        college_name:
-          member.college?.trim() || ""
+      college_name:
+        member.college?.trim() || ""
 
-      });
-
-    }
+    });
 
   }
 
 });
 
 
-if (rows.length > 0) {
+  if (rows.length > 0) {
 
-  const {
+    const {
     error: teamError
   } = await supabase
+
     .from("team_members")
+
     .insert(rows);
 
-  if (teamError) {
+    if (teamError) {
     throw teamError;
   }
 
 }
 
 
-setSubmitted(true);
+      setSubmitted(true);
       let {data:reg,error:rerr}=await supabase.from("registrations").insert(registrationPayload).select().single();
       // Older production schemas may still have the column missing from the live table.
       // Retry once without it so the registration flow remains usable; the supplied SQL migration
@@ -498,128 +513,203 @@ function Dashboard({user,profile,onRoute}){
   </main>
 }
 
-function Admin({onRoute}) {
-  const [regs, setRegs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("all");
-  const [error, setError] = useState("");
+// ============================================================
+// src/main.jsx
+// REPLACE BOTH Admin AND AdminRow COMPLETELY
+// ============================================================
+
+function Admin({ onRoute }) {
+
+  const [regs, setRegs] =
+    useState([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [filter, setFilter] =
+    useState("all");
+
+  const [error, setError] =
+    useState("");
+
 
   async function load() {
+
     setLoading(true);
     setError("");
 
     try {
+
       /*
-       * Fetch registrations separately.
-       * Do NOT use:
-       *
-       * select("*,team_members(*)")
-       *
-       * because relying on the automatic Supabase relationship
-       * can cause the admin dashboard to fail when the relationship
-       * is not correctly detected/cached by PostgREST.
+       * IMPORTANT:
+       * Do not use select("*,team_members(*)").
+       * Fetch both tables independently.
        */
+
       const {
         data: registrations,
         error: registrationsError
       } = await supabase
+
         .from("registrations")
+
         .select("*")
-        .order("created_at", { ascending: false });
+
+        .order(
+          "created_at",
+          {
+            ascending: false
+          }
+        );
+
 
       if (registrationsError) {
         throw registrationsError;
       }
 
-      /*
-       * Fetch team members separately.
-       */
+
       const {
         data: teamMembers,
         error: teamMembersError
       } = await supabase
+
         .from("team_members")
+
         .select("*")
-        .order("created_at", { ascending: true });
+
+        .order(
+          "created_at",
+          {
+            ascending: true
+          }
+        );
+
 
       if (teamMembersError) {
         throw teamMembersError;
       }
 
-      /*
-       * Group team members by registration_id.
-       */
+
       const membersByRegistration = {};
 
-      (teamMembers || []).forEach((member) => {
-        if (!membersByRegistration[member.registration_id]) {
-          membersByRegistration[member.registration_id] = [];
+
+      (teamMembers || []).forEach(
+        (member) => {
+
+          if (
+            !membersByRegistration[
+              member.registration_id
+            ]
+          ) {
+
+            membersByRegistration[
+              member.registration_id
+            ] = [];
+
+          }
+
+
+          membersByRegistration[
+            member.registration_id
+          ].push(member);
+
         }
-
-        membersByRegistration[member.registration_id].push(member);
-      });
-
-      /*
-       * Merge registrations + their team members.
-       */
-      const mergedRegistrations = (registrations || []).map(
-        (registration) => ({
-          ...registration,
-          team_members:
-            membersByRegistration[registration.id] || []
-        })
       );
 
-      setRegs(mergedRegistrations);
+
+      const merged =
+        (registrations || []).map(
+          (registration) => ({
+
+            ...registration,
+
+            team_members:
+              membersByRegistration[
+                registration.id
+              ] || []
+
+          })
+        );
+
+
+      setRegs(merged);
+
     } catch (err) {
-      console.error("ADMIN DATABASE FETCH ERROR:", err);
+
+      console.error(
+        "ADMIN FETCH ERROR:",
+        err
+      );
 
       setError(
         err?.message ||
-        "Unable to load registrations from the database."
+        "Unable to load registration data."
       );
 
       setRegs([]);
+
     } finally {
+
       setLoading(false);
+
     }
+
   }
+
 
   useEffect(() => {
     load();
   }, []);
 
+
   const counts = useMemo(
     () => ({
-      all: regs.length,
 
-      pending: regs.filter(
-        (r) => r.payment_status === "pending"
-      ).length,
+      all:
+        regs.length,
 
-      approved: regs.filter(
-        (r) => r.payment_status === "approved"
-      ).length,
+      pending:
+        regs.filter(
+          r =>
+            r.payment_status ===
+            "pending"
+        ).length,
 
-      rejected: regs.filter(
-        (r) => r.payment_status === "rejected"
-      ).length
+      approved:
+        regs.filter(
+          r =>
+            r.payment_status ===
+            "approved"
+        ).length,
+
+      rejected:
+        regs.filter(
+          r =>
+            r.payment_status ===
+            "rejected"
+        ).length
+
     }),
     [regs]
   );
 
-  const visible = regs.filter(
-    (r) =>
-      filter === "all" ||
-      r.payment_status === filter
-  );
+
+  const visible =
+    regs.filter(
+      r =>
+        filter === "all" ||
+        r.payment_status === filter
+    );
+
 
   return (
+
     <main className="page admin">
 
       <section className="dashboard-head">
 
         <div>
+
           <span className="index">
             ADMIN CONTROL CENTRE
           </span>
@@ -629,10 +719,12 @@ function Admin({onRoute}) {
           </h1>
 
           <p>
-            Review participant details, team data and payment
-            evidence. This is the only approval gate.
+            Review participant details,
+            team data and payment evidence.
           </p>
+
         </div>
+
 
         <div className="dash-head-actions">
 
@@ -641,27 +733,37 @@ function Admin({onRoute}) {
             onClick={load}
             disabled={loading}
           >
+
             <RefreshCw size={14} />
 
             {loading
               ? "Loading..."
               : "Refresh"}
+
           </button>
+
 
           <button
             className="outline"
             onClick={async () => {
+
               await supabase.auth.signOut();
+
               onRoute("home");
+
             }}
           >
+
             <LogOut size={15} />
+
             Sign out
+
           </button>
 
         </div>
 
       </section>
+
 
       <div className="admin-stats">
 
@@ -671,50 +773,63 @@ function Admin({onRoute}) {
             "TOTAL",
             "All registrations"
           ],
+
           [
             "pending",
             "PENDING",
             "Need review"
           ],
+
           [
             "approved",
             "APPROVED",
             "Verified"
           ],
+
           [
             "rejected",
             "REJECTED",
-            "Rejected / revoked"
+            "Rejected"
           ]
-        ].map(([key, title, description]) => (
 
-          <button
-            key={key}
-            className={
-              filter === key
-                ? "active"
-                : ""
-            }
-            onClick={() => setFilter(key)}
-          >
-            <span>{title}</span>
+        ].map(
+          ([key, title, description]) => (
 
-            <strong>
-              {counts[key]}
-            </strong>
+            <button
+              key={key}
+              className={
+                filter === key
+                  ? "active"
+                  : ""
+              }
+              onClick={() =>
+                setFilter(key)
+              }
+            >
 
-            <small>
-              {description}
-            </small>
-          </button>
+              <span>
+                {title}
+              </span>
 
-        ))}
+              <strong>
+                {counts[key]}
+              </strong>
+
+              <small>
+                {description}
+              </small>
+
+            </button>
+
+          )
+        )}
 
       </div>
 
+
       {error && (
 
-        <div className="empty admin-error">
+        <div className="empty">
 
           <CircleAlert />
 
@@ -737,6 +852,7 @@ function Admin({onRoute}) {
 
       )}
 
+
       {!error && loading && (
 
         <div className="empty">
@@ -744,6 +860,7 @@ function Admin({onRoute}) {
         </div>
 
       )}
+
 
       {!error &&
         !loading &&
@@ -761,48 +878,51 @@ function Admin({onRoute}) {
 
         )}
 
+
       {!error &&
         !loading &&
         visible.length > 0 && (
 
           <div className="admin-list">
 
-            {visible.map((registration) => (
+            {visible.map(
+              (registration) => (
 
-              <AdminRow
-                key={registration.id}
-                r={registration}
-                reload={load}
-              />
+                <AdminRow
+                  key={registration.id}
+                  r={registration}
+                  reload={load}
+                />
 
-            ))}
+              )
+            )}
 
           </div>
 
         )}
 
     </main>
+
   );
+
 }
 
 
 function AdminRow({ r, reload }) {
 
-  const [note, setNote] = useState(
-    r.admin_note || ""
-  );
+  const [note, setNote] =
+    useState(r.admin_note || "");
 
-  const [url, setUrl] = useState("");
+  const [url, setUrl] =
+    useState("");
 
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] =
+    useState(false);
 
   const [actionError, setActionError] =
     useState("");
 
 
-  /*
-   * Open payment screenshot.
-   */
   async function openShot() {
 
     setActionError("");
@@ -816,52 +936,59 @@ function AdminRow({ r, reload }) {
       return;
     }
 
+
     try {
 
       const {
         data,
         error
       } = await supabase
+
         .storage
-        .from("payment-screenshots")
+
+        .from(
+          "payment-screenshots"
+        )
+
         .createSignedUrl(
           r.payment_screenshot_path,
           600
         );
 
+
       if (error) {
         throw error;
       }
 
+
       if (!data?.signedUrl) {
 
         throw new Error(
-          "Unable to create payment screenshot URL."
+          "Unable to create screenshot URL."
         );
 
       }
+
 
       setUrl(data.signedUrl);
 
     } catch (err) {
 
       console.error(
-        "PAYMENT SCREENSHOT ERROR:",
+        "SCREENSHOT ERROR:",
         err
       );
 
       setActionError(
         err?.message ||
-        "Unable to open payment screenshot."
+        "Unable to open screenshot."
       );
 
     }
+
   }
 
 
-  /*
-   * Approve / reject registration.
-   */
   async function decide(nextStatus) {
 
     if (busy) {
@@ -871,36 +998,41 @@ function AdminRow({ r, reload }) {
     setBusy(true);
     setActionError("");
 
+
     try {
 
       const updateData = {
-        payment_status: nextStatus,
+
+        payment_status:
+          nextStatus,
 
         admin_note:
           note.trim() || null,
 
-        /*
-         * Keep verification timestamp only
-         * when the registration is approved.
-         */
         verified_at:
           nextStatus === "approved"
             ? new Date().toISOString()
             : null
+
       };
 
 
-      /*
-       * Update the exact registration.
-       */
       const {
         data,
         error
       } = await supabase
+
         .from("registrations")
+
         .update(updateData)
-        .eq("id", r.id)
+
+        .eq(
+          "id",
+          r.id
+        )
+
         .select("*")
+
         .single();
 
 
@@ -908,26 +1040,22 @@ function AdminRow({ r, reload }) {
         throw error;
       }
 
+
       if (!data) {
 
         throw new Error(
-          "The registration was not updated."
+          "Registration update failed."
         );
 
       }
 
 
-      /*
-       * Reload directly from Supabase.
-       * This guarantees that the dashboard reflects
-       * the actual database value.
-       */
       await reload();
 
     } catch (err) {
 
       console.error(
-        "ADMIN APPROVAL/REJECTION ERROR:",
+        "ADMIN UPDATE ERROR:",
         err
       );
 
@@ -941,17 +1069,22 @@ function AdminRow({ r, reload }) {
       setBusy(false);
 
     }
+
   }
 
 
   const selectedChallenges =
-    Array.isArray(r.selected_challenges)
+    Array.isArray(
+      r.selected_challenges
+    )
       ? r.selected_challenges
       : [];
 
 
   const teamMembers =
-    Array.isArray(r.team_members)
+    Array.isArray(
+      r.team_members
+    )
       ? r.team_members
       : [];
 
@@ -985,6 +1118,7 @@ function AdminRow({ r, reload }) {
             <strong>
               Team:
             </strong>{" "}
+
             {r.team_name ||
               "Individual"}
           </p>
@@ -993,22 +1127,25 @@ function AdminRow({ r, reload }) {
           {r.problem_theme && (
 
             <p>
+
               <strong>
                 Problem theme:
               </strong>{" "}
 
               {THEME_DATA.find(
-                (theme) =>
-                  theme.id ===
+                t =>
+                  t.id ===
                   r.problem_theme
               )?.name ||
                 r.problem_theme}
+
             </p>
 
           )}
 
 
           <p>
+
             {r.college_name ||
               "College not provided"}
 
@@ -1026,6 +1163,7 @@ function AdminRow({ r, reload }) {
 
             {r.year ||
               "Year not provided"}
+
           </p>
 
 
@@ -1048,32 +1186,33 @@ function AdminRow({ r, reload }) {
 
           <div className="admin-tags">
 
-            {selectedChallenges.length > 0 ? (
+            {selectedChallenges.length
+              ? selectedChallenges.map(
+                  (challengeId) => (
 
-              selectedChallenges.map(
-                (challengeId) => (
+                    <span
+                      key={challengeId}
+                    >
 
-                  <span key={challengeId}>
+                      {challenges.find(
+                        c =>
+                          c.id ===
+                          challengeId
+                      )?.title ||
+                        challengeId}
 
-                    {challenges.find(
-                      (challenge) =>
-                        challenge.id ===
-                        challengeId
-                    )?.title ||
-                      challengeId}
+                    </span>
 
-                  </span>
-
+                  )
                 )
-              )
 
-            ) : (
+              : (
 
-              <span>
-                No challenge selected
-              </span>
+                <span>
+                  No challenge selected
+                </span>
 
-            )}
+              )}
 
           </div>
 
@@ -1092,11 +1231,14 @@ function AdminRow({ r, reload }) {
               "pending"
             }
           >
+
             {(
               r.payment_status ||
               "pending"
             ).toUpperCase()}
+
           </em>
+
 
           <b>
             ₹
@@ -1112,49 +1254,43 @@ function AdminRow({ r, reload }) {
 
       <div className="admin-team">
 
-        {teamMembers.length > 0 ? (
+        {teamMembers.length > 0
 
-          teamMembers.map((member) => (
+          ? teamMembers.map(
+              (member) => (
 
-            <span key={member.id}>
+                <span key={member.id}>
 
-              <Users size={13} />
+                  <Users size={13} />
 
-              {" "}
+                  {" "}
 
-              {member.name ||
-                "Unnamed member"}
+                  {member.name ||
+                    "Unnamed member"}
 
-              {" · "}
+                  {" · "}
 
-              {member.email ||
-                "No email"}
+                  {member.email ||
+                    "No email"}
 
-              {" · "}
+                  {" · "}
 
-              {member.challenge_id ||
-                "No challenge"}
+                  {member.challenge_id ||
+                    "No challenge"}
 
-              {member.phone
-                ? ` · ${member.phone}`
-                : ""}
+                </span>
 
-              {member.college_name
-                ? ` · ${member.college_name}`
-                : ""}
+              )
+            )
 
+          : (
+
+            <span>
+              Individual / no additional
+              team members
             </span>
 
-          ))
-
-        ) : (
-
-          <span>
-            Individual / no additional
-            team members
-          </span>
-
-        )}
+          )}
 
       </div>
 
@@ -1166,8 +1302,11 @@ function AdminRow({ r, reload }) {
           onClick={openShot}
           disabled={busy}
         >
+
           <FileUp />
+
           View payment screenshot
+
         </button>
 
 
@@ -1251,7 +1390,9 @@ function AdminRow({ r, reload }) {
             }
             aria-label="Close payment screenshot"
           >
+
             <X />
+
           </button>
 
         </div>
@@ -1261,6 +1402,7 @@ function AdminRow({ r, reload }) {
     </article>
 
   );
+
 }
 function Recognition({onRoute}){
   const milestones=[["BRONZE","4 Bronze badges → 1 Silver","First layer of visible merit."],["SILVER","3 Silver badges → 1 Gold","A stronger signal of repeated performance."],["GOLD","10 Gold badges → Direct Interview","Unlock the ARVEXA hiring advantage."]];
