@@ -244,11 +244,7 @@ function Auth({mode="login",onAuth,onRoute}){
         {!isForgot&&<label>PASSWORD<div className="password-wrap"><input type={showPassword?"text":"password"} minLength="6" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Enter your password" required/><button type="button" onClick={()=>setShowPassword(!showPassword)}>{showPassword?"Hide":"Show"}</button></div></label>}
         <button className="auth-main-btn" disabled={busy}>{busy?"Please wait…":isSignup?"Create account":isForgot?"Send reset link":"Sign in"} <ArrowRight size={16}/></button>
         {msg&&<div className={"auth-message "+(msg.toLowerCase().includes("error")?"error":"")}>{msg}</div>}
-        {!isForgot&&<div className="auth-divider"><span>Or</span></div>}
-        {!isForgot&&<div className="auth-socials">
-          <button type="button" onClick={async()=>{const {error}=await supabase.auth.signInWithOAuth({provider:"google",options:{redirectTo:window.location.origin+"/dashboard"}});if(error)setMsg(error.message)}}><span>G</span> Continue with Google</button>
-          <button type="button" onClick={async()=>{const {error}=await supabase.auth.signInWithOAuth({provider:"github",options:{redirectTo:window.location.origin+"/dashboard"}});if(error)setMsg(error.message)}}><span>⌘</span> Continue with GitHub</button>
-          <button type="button" onClick={async()=>{const {error}=await supabase.auth.signInWithOAuth({provider:"facebook",options:{redirectTo:window.location.origin+"/dashboard"}});if(error)setMsg(error.message)}}><span>f</span> Continue with Facebook</button>
+        
         </div>}
         <div className="auth-switches">
           {mode==="login"&&<button type="button" onClick={()=>onRoute("forgot")}>Forgot password?</button>}
